@@ -100,6 +100,8 @@ export interface HttpTransportConfig {
   adminEndpoints: AdminEndpoints;
   userStore: UserStore;
   clientCache: ClientCache;
+  staticToken?: string;
+  odooUsername?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -641,21 +643,28 @@ export async function startHttpTransport(
           unauthorizedResponse(req, res);
           return;
         }
-        const tokenResult = config.userStore.resolveToken(rawToken);
-        if (!tokenResult || !config.userStore.isAllowed(tokenResult.email)) {
-          recordAuthFailure(clientIpForRate);
-          logRequest(
-            method,
-            path,
-            401,
-            startedAt,
-            clientIpForRate,
-            String(req.headers['user-agent'] ?? ''),
-          );
-          unauthorizedResponse(req, res);
-          return;
+        let email: string;
+        const isStaticToken = config.staticToken && rawToken === config.staticToken;
+
+        if (isStaticToken) {
+          email = config.odooUsername ?? 'static-mcp-user';
+        } else {
+          const tokenResult = config.userStore.resolveToken(rawToken);
+          if (!tokenResult || !config.userStore.isAllowed(tokenResult.email)) {
+            recordAuthFailure(clientIpForRate);
+            logRequest(
+              method,
+              path,
+              401,
+              startedAt,
+              clientIpForRate,
+              String(req.headers['user-agent'] ?? ''),
+            );
+            unauthorizedResponse(req, res);
+            return;
+          }
+          email = tokenResult.email;
         }
-        const { email } = tokenResult;
 
         // ----------------------------------------------------------------
         // Route: /mcp

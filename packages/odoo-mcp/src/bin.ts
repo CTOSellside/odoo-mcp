@@ -85,6 +85,17 @@ const STARTUP_TIMEOUT_MS = 30_000;
         // biome-ignore lint/style/noNonNullAssertion: clientCache is always set in HTTP mode before this resolver is invoked
         const cached = clientCache!.get(email);
         if (cached) return { client: cached.client, session: cached.session };
+
+        if (httpCfg.staticToken && email === config.odoo.username) {
+          const client = new OdooClient({
+            ...config.odoo,
+          });
+          const session = await client.authenticate();
+          // biome-ignore lint/style/noNonNullAssertion: clientCache is always set in HTTP mode before this resolver is invoked
+          clientCache!.set(email, { client, session, lastUsedAt: Date.now() });
+          return { client, session };
+        }
+
         const creds = userStore.getCredentials(email);
         if (!creds) throw new Error(`no credentials found for user ${email}`);
         const client = new OdooClient({
@@ -153,6 +164,8 @@ const STARTUP_TIMEOUT_MS = 30_000;
         userStore,
         // biome-ignore lint/style/noNonNullAssertion: clientCache is always set in HTTP mode
         clientCache: clientCache!,
+        staticToken: httpCfg.staticToken,
+        odooUsername: config.odoo.username,
       });
 
       // 5. Register signal handlers — armed after transport is ready.

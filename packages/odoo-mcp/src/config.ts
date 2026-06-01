@@ -14,6 +14,7 @@ declare const process: {
 // Buffer is a Node.js global; declare only the subset we use.
 declare const Buffer: {
   from(value: string, encoding?: string): { length: number };
+  alloc(size: number): { length: number };
 };
 
 const configSchema = z.object({
@@ -36,6 +37,7 @@ const configSchema = z.object({
   MCP_ADMIN_PASSWORD: z.string().optional(),
   MCP_USER_STORE_PATH: z.string().optional(),
   MCP_PUBLIC_URL: z.string().url().optional(),
+  MCP_STATIC_TOKEN: z.string().optional().transform((t) => t?.trim()),
 });
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): AppConfig {
@@ -90,9 +92,12 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     );
   }
 
-  // MODE=http: MCP_ENCRYPTION_KEY must be present and decode to exactly 32 bytes.
+  const isStaticMode = parsed.MODE === 'http' && parsed.MCP_STATIC_TOKEN !== undefined && parsed.MCP_STATIC_TOKEN !== '';
+
+  // MODE=http: MCP_ENCRYPTION_KEY must be present and decode to exactly 32 bytes (unless static token is set).
   if (
     parsed.MODE === 'http' &&
+    !isStaticMode &&
     (parsed.MCP_ENCRYPTION_KEY === undefined ||
       // @ts-ignore — Buffer is a Node.js global; ambient declaration above for tsc
       Buffer.from(parsed.MCP_ENCRYPTION_KEY, 'base64').length !== 32)
@@ -103,9 +108,10 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     process.exit(1);
   }
 
-  // MODE=http: MCP_ADMIN_PASSWORD must be present and non-empty.
+  // MODE=http: MCP_ADMIN_PASSWORD must be present and non-empty (unless static token is set).
   if (
     parsed.MODE === 'http' &&
+    !isStaticMode &&
     (parsed.MCP_ADMIN_PASSWORD === undefined || parsed.MCP_ADMIN_PASSWORD === '')
   ) {
     process.stderr.write(
@@ -130,11 +136,12 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
             trustProxy: parsed.MCP_TRUST_PROXY,
             publicUrl: parsed.MCP_PUBLIC_URL ?? '',
             // @ts-ignore — Buffer is a Node.js global; ambient declaration above for tsc
-            // biome-ignore lint/style/noNonNullAssertion: validated by the conditional exit guard above (MODE=http + invalid key → process.exit(1))
-            encryptionKey: Buffer.from(parsed.MCP_ENCRYPTION_KEY!, 'base64'),
-            // biome-ignore lint/style/noNonNullAssertion: validated by the conditional exit guard above (MODE=http + empty password → process.exit(1))
-            adminPassword: parsed.MCP_ADMIN_PASSWORD!,
+            encryptionKey: parsed.MCP_ENCRYPTION_KEY
+              ? Buffer.from(parsed.MCP_ENCRYPTION_KEY, 'base64')
+              : Buffer.alloc(32),
+            adminPassword: parsed.MCP_ADMIN_PASSWORD ?? '',
             userStorePath: parsed.MCP_USER_STORE_PATH ?? '/var/lib/odoo-mcp/users.json',
+            staticToken: parsed.MCP_STATIC_TOKEN,
           }
         : undefined,
   };

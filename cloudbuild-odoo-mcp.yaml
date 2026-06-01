@@ -1,0 +1,44 @@
+steps:
+  # Build Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'southamerica-west1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/odoo-mcp', '.']
+
+  # Push Docker image to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'southamerica-west1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/odoo-mcp']
+
+  # Deploy MOM MCP Service to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'odoo-mcp-mom'
+      - '--image'
+      - 'southamerica-west1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/odoo-mcp'
+      - '--region'
+      - 'southamerica-west1'
+      - '--allow-unauthenticated'
+      - '--set-env-vars=MODE=http,MCP_PORT=8080'
+      - '--set-secrets=ODOO_URL=ODOO_URL:latest,ODOO_DB=ODOO_DB:latest,ODOO_USERNAME=ODOO_USERNAME:latest,ODOO_API_KEY=ODOO_PASSWORD:latest,MCP_STATIC_TOKEN=ODOO_MCP_STATIC_TOKEN:latest'
+
+  # Deploy SELLSIDE MCP Service to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'odoo-mcp-sellside'
+      - '--image'
+      - 'southamerica-west1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/odoo-mcp'
+      - '--region'
+      - 'southamerica-west1'
+      - '--allow-unauthenticated'
+      - '--set-env-vars=MODE=http,MCP_PORT=8080'
+      - '--set-secrets=ODOO_URL=SELLSIDE_ODOO_URL:latest,ODOO_DB=SELLSIDE_ODOO_DB:latest,ODOO_USERNAME=SELLSIDE_ODOO_USERNAME:latest,ODOO_API_KEY=SELLSIDE_ODOO_PASSWORD:latest,MCP_STATIC_TOKEN=ODOO_MCP_STATIC_TOKEN:latest'
+
+images:
+  - 'southamerica-west1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/odoo-mcp'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

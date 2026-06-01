@@ -40,6 +40,8 @@ export interface AppConfig {
     adminPassword: string;
     /** Filesystem path to the JSON user-store file. */
     userStorePath: string;
+    /** Static Bearer token to bypass OAuth. */
+    staticToken?: string;
   };
 }
 
