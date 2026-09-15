@@ -49,7 +49,7 @@ const STARTUP_TIMEOUT_MS = 30_000;
     // 2. Wire all subsystems together — race against the startup timeout.
     //    If createOdooMcpServer hangs (e.g. Odoo unreachable), the timeout
     //    fires and the process exits with startup_error / code 1 (NFR-3).
-    let serverResult: Awaited<ReturnType<typeof createOdooMcpServer>>!;
+    let serverResult: Awaited<ReturnType<typeof createOdooMcpServer>>;
 
     if (config.mode === 'http') {
       // HTTP mode: build OAuth subsystems BEFORE createOdooMcpServer so the
@@ -164,4 +164,52 @@ const STARTUP_TIMEOUT_MS = 30_000;
         logger.shutdown();
         process.exit(0);
       };
-      process.on('SIGTERM', shutdown);\n      process.on('SIGINT', shutdown);\n    } else {\n      // stdio mode — no OAuth components instantiated.\n      serverResult = await Promise.race([\n        createOdooMcpServer({\n          odooConfig: config.odoo,\n          logFile: config.logFile,\n          profile: config.profile,\n        }),\n        new Promise<never>((_, reject) =>\n          setTimeout(() => reject(new Error('startup_timeout')), STARTUP_TIMEOUT_MS),\n        ),\n      ]);\n\n      const { server, logger } = serverResult;\n\n      // 3. Log startup info before connecting (AC-3 — startup BEFORE connect).\n      logger.startup({\n        odoo_url: config.odoo.url,\n        odoo_db: config.odoo.db,\n        odoo_username: config.odoo.username,\n        mode: config.mode,\n      });\n\n      const transport = new StdioServerTransport();\n      await server.connect(transport);\n      const closeTransport = async () => {\n        await transport.close();\n      };\n\n      // 5. Register signal handlers — armed after transport is ready.\n      const shutdown = async () => {\n        await closeTransport();\n        logger.shutdown();\n        process.exit(0);\n      };\n      process.on('SIGTERM', shutdown);\n      process.on('SIGINT', shutdown);\n    }\n  } catch (err) {\n    const message = err instanceof Error ? err.message : String(err);\n    const errorType = err instanceof Error ? err.constructor.name : 'UnknownError';\n    process.stderr.write(\n      `${JSON.stringify({ event: 'startup_error', error_type: errorType, message })}\\n`,\n    );\n    process.exit(1);\n  }\n})();\n
+      process.on('SIGTERM', shutdown);
+      process.on('SIGINT', shutdown);
+    } else {
+      // stdio mode — no OAuth components instantiated.
+      serverResult = await Promise.race([
+        createOdooMcpServer({
+          odooConfig: config.odoo,
+          logFile: config.logFile,
+          profile: config.profile,
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('startup_timeout')), STARTUP_TIMEOUT_MS),
+        ),
+      ]);
+
+      const { server, logger } = serverResult;
+
+      // 3. Log startup info before connecting (AC-3 — startup BEFORE connect).
+      logger.startup({
+        odoo_url: config.odoo.url,
+        odoo_db: config.odoo.db,
+        odoo_username: config.odoo.username,
+        mode: config.mode,
+      });
+
+      const transport = new StdioServerTransport();
+      await server.connect(transport);
+      const closeTransport = async () => {
+        await transport.close();
+      };
+
+      // 5. Register signal handlers — armed after transport is ready.
+      const shutdown = async () => {
+        await closeTransport();
+        logger.shutdown();
+        process.exit(0);
+      };
+      process.on('SIGTERM', shutdown);
+      process.on('SIGINT', shutdown);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const errorType = err instanceof Error ? err.constructor.name : 'UnknownError';
+    process.stderr.write(
+      `${JSON.stringify({ event: 'startup_error', error_type: errorType, message })}\n`,
+    );
+    process.exit(1);
+  }
+})();
