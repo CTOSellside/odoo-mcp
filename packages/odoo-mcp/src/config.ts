@@ -2,7 +2,7 @@
 import { closeSync, openSync } from 'node:fs';
 import { z } from 'zod';
 // AppConfig defined in types.ts (T-01 — must land first or be stubbed)
-import type { AppConfig } from './types.js';
+import type { AppConfig, McpProfile } from './types.js';
 
 // Minimal ambient declaration — avoids @types/node dependency.
 declare const process: {
@@ -36,6 +36,11 @@ const configSchema = z.object({
   MCP_ADMIN_PASSWORD: z.string().optional(),
   MCP_USER_STORE_PATH: z.string().optional(),
   MCP_PUBLIC_URL: z.string().url().optional(),
+  MCP_PROFILE: z.enum(['readonly', 'operations', 'admin']).default('admin'),
+  MCP_READONLY: z
+    .union([z.literal('true'), z.literal('false'), z.literal('1'), z.literal('0')])
+    .transform((v) => v === 'true' || v === '1')
+    .optional(),
 });
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): AppConfig {
@@ -114,7 +119,10 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     process.exit(1);
   }
 
+  const profile: McpProfile = parsed.MCP_READONLY === true ? 'readonly' : parsed.MCP_PROFILE;
+
   return {
+    profile,
     odoo: {
       url: parsed.ODOO_URL,
       db: parsed.ODOO_DB,

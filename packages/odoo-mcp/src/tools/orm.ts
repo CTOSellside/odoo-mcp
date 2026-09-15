@@ -6,7 +6,7 @@ import type { ZodError } from 'zod';
 import { buildContext, validateCompanySubset } from '../context.js';
 import { formatMcpError } from '../errors.js';
 import type { Logger } from '../logger.js';
-import type { ClientResolver, RequestContext } from '../types.js';
+import type { ClientResolver, McpProfile, RequestContext } from '../types.js';
 
 /** Structural type for AsyncLocalStorage — avoids @types/node dependency. */
 type AsyncLocalStorageLike<T> = { getStore(): T | undefined };
@@ -137,17 +137,13 @@ async function callOrm<T extends { allowed_company_ids?: number[]; active_compan
 }
 
 /**
- * Register all 6 ORM tools on the MCP server using the 3-arg registerTool
- * overload that advertises the Zod input schema as JSON Schema in tools/list.
- *
- * Without inputSchema in the registration, MCP clients (Claude Code,
- * Claude Desktop, etc.) see an empty properties bag and strip every arg
- * before calling — making tools effectively unusable.
+ * Register ORM tools on the MCP server filtered by the active security profile.
  */
 export function registerOrmTools(
   server: McpServer,
   clientResolver: ClientResolver,
   logger: Logger,
+  profile: McpProfile = 'admin',
 ): void {
   server.registerTool(
     'odoo_search_read',
@@ -208,89 +204,93 @@ export function registerOrmTools(
     },
   );
 
-  server.registerTool(
-    'odoo_create',
-    {
-      description:
-        'Create one or many records. `values` may be a single dict or an array of dicts.',
-      inputSchema: createSchema.shape,
-    },
-    async (args) => {
-      const { client, session } = await clientResolver();
-      const user_id = await getUserId();
-      const t0 = Date.now();
-      const rawArgs = args as unknown as Record<string, unknown>;
-      const parseResult = createSchema.safeParse(args);
-      if (!parseResult.success)
-        return zodErrorResult('odoo_create', parseResult.error, logger, t0, rawArgs, user_id);
-      return callOrm(
-        'odoo_create',
-        parseResult.data,
-        (parsed, context) =>
-          client.create(
-            parsed.model,
-            parsed.values as Record<string, unknown> | Record<string, unknown>[],
-            context,
-          ),
-        logger,
-        client,
-        session,
-        user_id,
-      );
-    },
-  );
+  if (profile !== 'readonly') {
+    server.registerTool(
+      'odoo_create',
+      {
+        description:
+          'Create one or many records. `values` may be a single dict or an array of dicts.',
+        inputSchema: createSchema.shape,
+      },
+      async (args) => {
+        const { client, session } = await clientResolver();
+        const user_id = await getUserId();
+        const t0 = Date.now();
+        const rawArgs = args as unknown as Record<string, unknown>;
+        const parseResult = createSchema.safeParse(args);
+        if (!parseResult.success)
+          return zodErrorResult('odoo_create', parseResult.error, logger, t0, rawArgs, user_id);
+        return callOrm(
+          'odoo_create',
+          parseResult.data,
+          (parsed, context) =>
+            client.create(
+              parsed.model,
+              parsed.values as Record<string, unknown> | Record<string, unknown>[],
+              context,
+            ),
+          logger,
+          client,
+          session,
+          user_id,
+        );
+      },
+    );
 
-  server.registerTool(
-    'odoo_write',
-    {
-      description: 'Update existing records. Applies `values` to every record in `ids`.',
-      inputSchema: writeSchema.shape,
-    },
-    async (args) => {
-      const { client, session } = await clientResolver();
-      const user_id = await getUserId();
-      const t0 = Date.now();
-      const rawArgs = args as unknown as Record<string, unknown>;
-      const parseResult = writeSchema.safeParse(args);
-      if (!parseResult.success)
-        return zodErrorResult('odoo_write', parseResult.error, logger, t0, rawArgs, user_id);
-      return callOrm(
-        'odoo_write',
-        parseResult.data,
-        (parsed, context) => client.write(parsed.model, parsed.ids, parsed.values, context),
-        logger,
-        client,
-        session,
-        user_id,
-      );
-    },
-  );
+    server.registerTool(
+      'odoo_write',
+      {
+        description: 'Update existing records. Applies `values` to every record in `ids`.',
+        inputSchema: writeSchema.shape,
+      },
+      async (args) => {
+        const { client, session } = await clientResolver();
+        const user_id = await getUserId();
+        const t0 = Date.now();
+        const rawArgs = args as unknown as Record<string, unknown>;
+        const parseResult = writeSchema.safeParse(args);
+        if (!parseResult.success)
+          return zodErrorResult('odoo_write', parseResult.error, logger, t0, rawArgs, user_id);
+        return callOrm(
+          'odoo_write',
+          parseResult.data,
+          (parsed, context) => client.write(parsed.model, parsed.ids, parsed.values, context),
+          logger,
+          client,
+          session,
+          user_id,
+        );
+      },
+    );
+  }
 
-  server.registerTool(
-    'odoo_unlink',
-    {
-      description: 'Delete records. Returns true on success.',
-      inputSchema: unlinkSchema.shape,
-    },
-    async (args) => {
-      const { client, session } = await clientResolver();
-      const user_id = await getUserId();
-      const t0 = Date.now();
-      const rawArgs = args as unknown as Record<string, unknown>;
-      const parseResult = unlinkSchema.safeParse(args);
-      if (!parseResult.success)
-        return zodErrorResult('odoo_unlink', parseResult.error, logger, t0, rawArgs, user_id);
-      return callOrm(
-        'odoo_unlink',
-        parseResult.data,
-        (parsed, context) => client.unlink(parsed.model, parsed.ids, context),
-        logger,
-        client,
-        session,
-        user_id,
-      );
-    },
-  );
+  if (profile === 'admin') {
+    server.registerTool(
+      'odoo_unlink',
+      {
+        description: 'Delete records. Returns true on success.',
+        inputSchema: unlinkSchema.shape,
+      },
+      async (args) => {
+        const { client, session } = await clientResolver();
+        const user_id = await getUserId();
+        const t0 = Date.now();
+        const rawArgs = args as unknown as Record<string, unknown>;
+        const parseResult = unlinkSchema.safeParse(args);
+        if (!parseResult.success)
+          return zodErrorResult('odoo_unlink', parseResult.error, logger, t0, rawArgs, user_id);
+        return callOrm(
+          'odoo_unlink',
+          parseResult.data,
+          (parsed, context) => client.unlink(parsed.model, parsed.ids, context),
+          logger,
+          client,
+          session,
+          user_id,
+        );
+      },
+    );
+  }
 
   server.registerTool(
     'odoo_search_count',

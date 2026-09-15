@@ -7,10 +7,20 @@ declare const Buffer: {
 };
 
 /**
+ * Access profile determining which MCP tools are exposed.
+ * - 'readonly': search_read, read, search_count, introspect, report.
+ * - 'operations': readonly tools + create, write, action.
+ * - 'admin': all tools including unlink and execute.
+ */
+export type McpProfile = 'readonly' | 'operations' | 'admin';
+
+/**
  * Full application configuration — merges Odoo connection settings with
  * MCP transport options.  Loaded once at startup by `config.ts`.
  */
 export interface AppConfig {
+  /** Profile determining which MCP tools are registered. */
+  profile: McpProfile;
   /** Odoo connection credentials and URL. */
   odoo: OdooConfig;
   /** Optional path to a file for structured JSON log output. */
@@ -54,6 +64,8 @@ export interface HealthPayload {
   odoo_url: string;
   /** Odoo database name. */
   odoo_db: string;
+  /** Active security profile. */
+  profile?: McpProfile;
   /** ISO 8601 timestamp of when the HTTP server started. */
   started_at: string;
   /** Whether the last Odoo connectivity probe succeeded. */
@@ -74,6 +86,8 @@ export interface HealthResponse {
   odoo_url: string;
   /** Odoo database name. */
   odoo_db: string;
+  /** Active security profile. */
+  profile?: McpProfile;
   /** ISO 8601 timestamp of when the HTTP server started. */
   started_at: string;
   /** Whether the last Odoo connectivity probe succeeded. */
