@@ -42,9 +42,26 @@ export function renderConsentPage(params: {
   const { client_name, error, email, formAction, csrf_token } = params;
 
   const env = typeof process !== 'undefined' && process && process.env ? process.env : {};
-  const instanceName = params.instanceName || env.ODOO_INSTANCE_NAME || env.INSTANCE_NAME || '';
+  let instanceName = params.instanceName || env.ODOO_INSTANCE_NAME || env.INSTANCE_NAME || '';
   const odooUrl = params.odooUrl || env.ODOO_URL || '';
-  const targetUserEmail = params.targetUserEmail || env.TARGET_USER_EMAIL || env.AUTHORIZED_EMAIL || '';
+  let targetUserEmail = params.targetUserEmail || env.TARGET_USER_EMAIL || env.AUTHORIZED_EMAIL || env.ODOO_USERNAME || '';
+
+  if (!instanceName && odooUrl) {
+    if (odooUrl.includes('pharmacorp')) instanceName = 'PharmaCorp Chile';
+    else if (odooUrl.includes('sellside')) instanceName = 'Sellside SpA (Producción)';
+    else if (odooUrl.includes('ghc')) instanceName = 'GHC Minería & Servicios';
+    else if (odooUrl.includes('demo')) instanceName = 'Odoo Online Demo Sandbox';
+    else {
+      try {
+        instanceName = new URL(odooUrl).hostname;
+      } catch {
+        instanceName = odooUrl;
+      }
+    }
+  }
+  if (!targetUserEmail && env.ODOO_USERNAME) {
+    targetUserEmail = env.ODOO_USERNAME;
+  }
 
   const title =
     client_name != null && client_name !== ''
