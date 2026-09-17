@@ -1,3 +1,5 @@
+declare const process: any;
+
 /** HTML-escape a string to prevent XSS. */
 function escapeHtml(raw: string): string {
   return raw
@@ -39,9 +41,10 @@ export function renderConsentPage(params: {
 }): string {
   const { client_name, error, email, formAction, csrf_token } = params;
 
-  const instanceName = params.instanceName || process.env.ODOO_INSTANCE_NAME || process.env.INSTANCE_NAME || '';
-  const odooUrl = params.odooUrl || process.env.ODOO_URL || '';
-  const targetUserEmail = params.targetUserEmail || process.env.TARGET_USER_EMAIL || process.env.AUTHORIZED_EMAIL || '';
+  const env = typeof process !== 'undefined' && process && process.env ? process.env : {};
+  const instanceName = params.instanceName || env.ODOO_INSTANCE_NAME || env.INSTANCE_NAME || '';
+  const odooUrl = params.odooUrl || env.ODOO_URL || '';
+  const targetUserEmail = params.targetUserEmail || env.TARGET_USER_EMAIL || env.AUTHORIZED_EMAIL || '';
 
   const title =
     client_name != null && client_name !== ''
