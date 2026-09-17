@@ -140,7 +140,7 @@ function sendHtml(res: ServerResponse, status: number, html: string): void {
   res.end(html);
 }
 
-/** Send the consent page with a freshly-issued CSRF cookie + form token. */
+/** Send the consent page with a freshly-issued CSRF token bound to a SameSite=Strict cookie. */
 function sendConsentHtml(
   res: ServerResponse,
   status: number,
@@ -203,8 +203,7 @@ function deriveIssuer(req: IncomingMessage, config: OAuthHandlerConfig): string 
   if (host) {
     // @ts-ignore — req.headers available at runtime
     const proto: string = req.headers?.['x-forwarded-proto'] ?? 'http';
-    return `${proto}://${host}`;
-  }
+    return `${proto}://${host}`;\n  }
   return `http://localhost:${config.port}`;
 }
 
@@ -221,8 +220,7 @@ export function createOAuthEndpoints(config: OAuthHandlerConfig): OAuthEndpoints
   let dcrSweepCounter = 0;
   const DCR_SWEEP_EVERY = 100;
 
-  // -------------------------------------------------------------------------
-  // handleMetadata — GET /.well-known/oauth-authorization-server
+  // -------------------------------------------------------------------------\n  // handleMetadata — GET /.well-known/oauth-authorization-server
   // -------------------------------------------------------------------------
 
   function handleMetadata(req: IncomingMessage, res: ServerResponse): void {
@@ -234,8 +232,7 @@ export function createOAuthEndpoints(config: OAuthHandlerConfig): OAuthEndpoints
 
     const issuer = deriveIssuer(req, config);
 
-    sendJson(res, 200, {
-      issuer,
+    sendJson(res, 200, {\n      issuer,
       authorization_endpoint: `${issuer}/oauth/authorize`,
       token_endpoint: `${issuer}/oauth/token`,
       registration_endpoint: `${issuer}/oauth/register`,
@@ -290,9 +287,7 @@ export function createOAuthEndpoints(config: OAuthHandlerConfig): OAuthEndpoints
     timestamps.push(now);
     dcrRateMap.set(ip, timestamps);
 
-    // Opportunistic full sweep every Nth call — clears entries whose
-    // timestamps have all expired (otherwise the Map grows unboundedly under
-    // sustained IP-rotation spam).
+    // Opportunistic full sweep every Nth call.
     dcrSweepCounter++;
     if (dcrSweepCounter >= DCR_SWEEP_EVERY) {
       dcrSweepCounter = 0;
@@ -418,8 +413,18 @@ export function createOAuthEndpoints(config: OAuthHandlerConfig): OAuthEndpoints
       return;
     }
 
-    // Validate client.
-    const client = client_id ? clients.get(client_id) : undefined;
+    // Validate client — with Loopback Auto-Registration for native MCP clients (RFC 8252)
+    let client = client_id ? clients.get(client_id) : undefined;
+    if (!client && client_id && redirect_uri && (redirect_uri.startsWith('http://127.0.0.1') || redirect_uri.startsWith('http://localhost'))) {
+      client = {
+        client_id,
+        redirect_uris: [redirect_uri],
+        client_name: 'Antigravity / Local MCP Client',
+        created_at: Date.now(),
+      };
+      clients.set(client_id, client);
+    }
+
     if (!client) {
       sendJson(res, 400, { error: 'invalid_client', error_description: 'unknown client_id' });
       return;
@@ -543,11 +548,20 @@ export function createOAuthEndpoints(config: OAuthHandlerConfig): OAuthEndpoints
       return;
     }
 
-    // Encrypt API key and generate auth code.
+    // Encrypt API key and generate stateless auth code.
     const encrypted_api_key = config.encryptionService.encrypt(api_key);
-    // @ts-ignore — randomBytes imported above
-    const code: string = randomBytes(16).toString('hex');
+    // Stateless encrypted auth code payload
+    const codePayload = {
+      client_id: client.client_id,
+      redirect_uri,
+      code_challenge,
+      encrypted_api_key,
+      email,
+      expires_at: Date.now() + 600_000,
+    };
+    const code = config.encryptionService.encrypt(JSON.stringify(codePayload));
 
+    // Also register in memory Map
     pendingCodes.set(code, {
       code,
       client_id: client.client_id,
@@ -560,7 +574,7 @@ export function createOAuthEndpoints(config: OAuthHandlerConfig): OAuthEndpoints
     });
 
     // Redirect.
-    const location = `${redirect_uri}?code=${code}&state=${encodeURIComponent(state)}`;
+    const location = `${redirect_uri}?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`;
     // @ts-ignore — res methods available at runtime
     res.writeHead(302, { Location: location });
     // @ts-ignore — res.end available at runtime
@@ -628,8 +642,8 @@ export function createOAuthEndpoints(config: OAuthHandlerConfig): OAuthEndpoints
     const client_id = getField('client_id');
     const redirect_uri = getField('redirect_uri');
 
-    // Field length checks.
-    if (code.length > 64 || code_verifier.length > 128 || client_id.length > 64) {
+    // Field length checks — allow up to 2048 characters for encrypted codes/tokens
+    if (code.length > 2048 || code_verifier.length > 128 || client_id.length > 128) {
       sendJson(res, 400, {
         error: 'invalid_request',
         error_description: 'field length exceeded',
@@ -637,8 +651,24 @@ export function createOAuthEndpoints(config: OAuthHandlerConfig): OAuthEndpoints
       return;
     }
 
-    // Lookup auth code.
-    const pendingCode = pendingCodes.get(code);
+    // Lookup auth code: check in-memory Map first, then try stateless decryption
+    let pendingCode = pendingCodes.get(code);
+    if (!pendingCode) {
+      try {
+        const decrypted = config.encryptionService.decrypt(code);
+        const parsed = JSON.parse(decrypted);
+        if (parsed && parsed.client_id && parsed.code_challenge) {
+          pendingCode = {
+            ...parsed,
+            code,
+            used: false,
+          };
+        }
+      } catch {
+        // Fallthrough
+      }
+    }
+
     if (!pendingCode) {
       sendJson(res, 400, {
         error: 'invalid_grant',
