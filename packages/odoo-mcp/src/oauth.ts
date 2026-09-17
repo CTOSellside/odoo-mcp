@@ -203,7 +203,8 @@ function deriveIssuer(req: IncomingMessage, config: OAuthHandlerConfig): string 
   if (host) {
     // @ts-ignore — req.headers available at runtime
     const proto: string = req.headers?.['x-forwarded-proto'] ?? 'http';
-    return `${proto}://${host}`;\n  }
+    return `${proto}://${host}`;
+  }
   return `http://localhost:${config.port}`;
 }
 
@@ -220,7 +221,8 @@ export function createOAuthEndpoints(config: OAuthHandlerConfig): OAuthEndpoints
   let dcrSweepCounter = 0;
   const DCR_SWEEP_EVERY = 100;
 
-  // -------------------------------------------------------------------------\n  // handleMetadata — GET /.well-known/oauth-authorization-server
+  // -------------------------------------------------------------------------
+  // handleMetadata — GET /.well-known/oauth-authorization-server
   // -------------------------------------------------------------------------
 
   function handleMetadata(req: IncomingMessage, res: ServerResponse): void {
@@ -232,7 +234,8 @@ export function createOAuthEndpoints(config: OAuthHandlerConfig): OAuthEndpoints
 
     const issuer = deriveIssuer(req, config);
 
-    sendJson(res, 200, {\n      issuer,
+    sendJson(res, 200, {
+      issuer,
       authorization_endpoint: `${issuer}/oauth/authorize`,
       token_endpoint: `${issuer}/oauth/token`,
       registration_endpoint: `${issuer}/oauth/register`,
