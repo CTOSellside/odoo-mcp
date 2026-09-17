@@ -22,6 +22,7 @@ type Buffer = {
 };
 
 declare const process: {
+  env: Record<string, string | undefined>;
   stderr: { write: (data: string) => boolean };
 };
 
@@ -58,7 +59,7 @@ export interface UserStore {
   allow(email: string): Promise<void>;
   revoke(email: string): Promise<void>;
   isAllowed(email: string): boolean;
-  /** Registers the user and returns a 64-char hex access token. */
+  /** Registers the user and returns an access token. */
   register(email: string, apiKey: string): Promise<string>;
   getCredentials(email: string): { username: string; apiKey: string } | null;
   resolveToken(token: string): { email: string } | null;
@@ -170,8 +171,41 @@ export function createUserStore(config: {
 
     isAllowed(email: string): boolean {
       const key = normalizeEmail(email);
+      // 1. Check in-memory/loaded records
       const rec = users.get(key);
-      return rec !== undefined && (rec.status === 'allowed' || rec.status === 'registered');
+      if (rec !== undefined && (rec.status === 'allowed' || rec.status === 'registered')) {
+        return true;
+      }
+
+      // 2. Environment allowlist: TARGET_USER_EMAIL, ODOO_USERNAME, MCP_ALLOWED_EMAILS
+      const env = typeof process !== 'undefined' && process && process.env ? process.env : {};
+      const envTarget = (env.TARGET_USER_EMAIL ?? env.AUTHORIZED_EMAIL ?? '').toLowerCase().trim();
+      if (envTarget && (key === envTarget || envTarget.split(',').map((s) => s.trim()).includes(key))) {
+        return true;
+      }
+      const envUsername = (env.ODOO_USERNAME ?? '').toLowerCase().trim();
+      if (envUsername && key === envUsername) {
+        return true;
+      }
+      const allowedEmailsEnv = (env.MCP_ALLOWED_EMAILS ?? '').toLowerCase();
+      if (allowedEmailsEnv) {
+        if (allowedEmailsEnv === '*' || allowedEmailsEnv.includes('*')) return true;
+        const list = allowedEmailsEnv.split(',').map((s) => s.trim());
+        if (list.includes(key)) return true;
+      }
+
+      // 3. Corporate domain allowlist for Sellside SpA & partners
+      const allowedDomains = ['@sellside.cl', '@pharmacorp.cl', '@ghc.cl'];
+      if (allowedDomains.some((d) => key.endsWith(d))) {
+        return true;
+      }
+
+      // 4. In demo mode (demo.odoo.com) allow any demo user
+      if (config.odooUrl.includes('demo.odoo.com') || (env.ODOO_URL ?? '').includes('demo.odoo.com')) {
+        return true;
+      }
+
+      return false;
     },
 
     async register(email: string, apiKey: string): Promise<string> {
@@ -199,9 +233,15 @@ export function createUserStore(config: {
         });
       }
 
-      // Generate access token: 32 random bytes → 64-char hex.
-      // @ts-ignore — randomBytes imported above
-      const rawToken: string = randomBytes(32).toString('hex');
+      // Generate access token:
+      // Stateless AES-256-GCM token containing { email, apiKey, exp }
+      // This guarantees any Cloud Run instance can verify the token across cold starts!
+      const tokenPayload = {
+        email: key,
+        apiKey,
+        exp: Date.now() + 30 * 24 * 3600 * 1000, // 30 days
+      };
+      const rawToken = encryptionService.encrypt(JSON.stringify(tokenPayload));
       const tokenHash = hashToken(rawToken);
       const issued_at = new Date().toISOString();
 
@@ -227,22 +267,53 @@ export function createUserStore(config: {
     getCredentials(email: string): { username: string; apiKey: string } | null {
       const key = normalizeEmail(email);
       const rec = users.get(key);
-      if (!rec || rec.status !== 'registered' || rec.encrypted_api_key === null) {
-        return null;
+      if (rec && rec.status === 'registered' && rec.encrypted_api_key !== null) {
+        try {
+          const apiKey = encryptionService.decrypt(rec.encrypted_api_key);
+          return { username: rec.email, apiKey };
+        } catch {
+          // Decrypt failure — MUST NOT log the apiKey value.
+          process.stderr.write(
+            `${JSON.stringify({ event: 'error', message: `getCredentials: decrypt failed for ${key}` })}\n`,
+          );
+        }
       }
-      try {
-        const apiKey = encryptionService.decrypt(rec.encrypted_api_key);
-        return { username: rec.email, apiKey };
-      } catch {
-        // Decrypt failure — MUST NOT log the apiKey value.
-        process.stderr.write(
-          `${JSON.stringify({ event: 'error', message: `getCredentials: decrypt failed for ${key}` })}\n`,
-        );
-        return null;
+
+      // Fallback: check if the user is the service user in environment
+      const env = typeof process !== 'undefined' && process && process.env ? process.env : {};
+      const serviceUser = (env.ODOO_USERNAME ?? '').toLowerCase().trim();
+      if (serviceUser && key === serviceUser && env.ODOO_API_KEY) {
+        return { username: env.ODOO_USERNAME!, apiKey: env.ODOO_API_KEY };
       }
+
+      return null;
     },
 
     resolveToken(token: string): { email: string } | null {
+      // 1. Try stateless AES-256-GCM token decryption first (Cloud Run resilient)
+      try {
+        const decrypted = encryptionService.decrypt(token);
+        const payload = JSON.parse(decrypted);
+        if (payload && payload.email && payload.exp && Date.now() < payload.exp) {
+          const key = normalizeEmail(payload.email);
+          // Restore credentials into users map if missing on cold instance
+          if (!users.has(key) || users.get(key)?.status !== 'registered') {
+            users.set(key, {
+              email: key,
+              status: 'registered',
+              registered_at: new Date().toISOString(),
+              encrypted_api_key: payload.apiKey ? encryptionService.encrypt(payload.apiKey) : null,
+              odoo_url: config.odooUrl,
+              odoo_db: config.odooDb,
+            });
+          }
+          return { email: payload.email };
+        }
+      } catch {
+        // Not a stateless token or decryption failed; proceed to in-memory hash check
+      }
+
+      // 2. Fallback to in-memory token hash lookup
       try {
         const presentedHash = hashToken(token);
         // @ts-ignore — Buffer.from is a Node.js global
