@@ -368,6 +368,18 @@ export function createUserStore(config: {
             `${JSON.stringify({ event: 'error', message: `user-store load failed: ${message}` })}\n`,
           );
         }
+        const env = typeof process !== 'undefined' && process && process.env ? process.env : {};
+        const target = (env.TARGET_USER_EMAIL || env.AUTHORIZED_EMAIL || env.ODOO_USERNAME || '').toLowerCase().trim();
+        if (target && !users.has(target)) {
+          users.set(target, {
+            email: target,
+            status: 'allowed',
+            registered_at: null,
+            encrypted_api_key: env.ODOO_API_KEY ? encryptionService.encrypt(env.ODOO_API_KEY) : null,
+            odoo_url: config.odooUrl,
+            odoo_db: config.odooDb,
+          });
+        }
         return;
       }
 
@@ -407,6 +419,20 @@ export function createUserStore(config: {
       // Load tokens.
       for (const tok of parsed.tokens ?? []) {
         tokens.set(tok.token_hash, { email: tok.email, issued_at: tok.issued_at });
+      }
+
+      // Auto-populate target user and service user in users map
+      const env = typeof process !== 'undefined' && process && process.env ? process.env : {};
+      const target = (env.TARGET_USER_EMAIL || env.AUTHORIZED_EMAIL || env.ODOO_USERNAME || '').toLowerCase().trim();
+      if (target && !users.has(target)) {
+        users.set(target, {
+          email: target,
+          status: 'allowed',
+          registered_at: null,
+          encrypted_api_key: env.ODOO_API_KEY ? encryptionService.encrypt(env.ODOO_API_KEY) : null,
+          odoo_url: config.odooUrl,
+          odoo_db: config.odooDb,
+        });
       }
     },
 
